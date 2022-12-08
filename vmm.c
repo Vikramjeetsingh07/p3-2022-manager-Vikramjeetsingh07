@@ -7,24 +7,23 @@
 #define GET_PAGE_NUMBER(addr) ((addr - vmm.vm_start)/vmm.page_size) ;
 #define GET_PAGE_OFFSET(addr) ((addr - vmm.vm_start) % vmm.page_size) ;
 
-//vmm = (struct VMM *) malloc( sizeof(struct VMM) ) ;
+
 
 void initVmm(enum policy_type policy, void *vm, int vm_size, int num_frames, int page_size)
 {
     resetVmm() ;
-    // initialize virtual memory parameters
     vmm.vm_start = vm ;
     vmm.vm_size = vm_size ;
     vmm.vm_policy = policy ;
     vmm.frames = num_frames ;
     vmm.page_size = page_size ;
 
-    // create sigHandler for segmentation fault.
+ 
     struct sigaction sa ;
     sa.sa_sigaction= segFaultHandler ;
     sigemptyset(&(sa.sa_mask)) ;
     sa.sa_flags = SA_SIGINFO ;
-    if(sigaction(SIGSEGV, &sa, NULL) !=0 ) 
+    if(sigaction(SIGSEGV, &sa, NULL) !=0 )
         exit(-1) ;
 
     if(mprotect(vm, vm_size, PROT_NONE) != 0)
@@ -32,7 +31,7 @@ void initVmm(enum policy_type policy, void *vm, int vm_size, int num_frames, int
 
 }
 
-void segFaultHandler(int sig, siginfo_t* sigInfo, void *context) 
+void segFaultHandler(int sig, siginfo_t* sigInfo, void *context)
 {
     resetLoggerData() ;
 
@@ -62,7 +61,7 @@ void segFaultHandler(int sig, siginfo_t* sigInfo, void *context)
             pagePtr->frameNo = vmm.active_pages++ ;
             addToList(pagePtr) ;
         }
-        else 
+        else
         {
             if( vmm.vm_policy == MM_FIFO)
             {
@@ -79,7 +78,7 @@ void segFaultHandler(int sig, siginfo_t* sigInfo, void *context)
         handleExistingPage(pagePtr, writeEnabled ) ;
     }
 
-    mm_logger( log_data.virtualPageNo, 
+    mm_logger( log_data.virtualPageNo,
             log_data.cause,
             log_data.pageEvicted,
             log_data.writeBack,
@@ -87,17 +86,17 @@ void segFaultHandler(int sig, siginfo_t* sigInfo, void *context)
 
 }
 
-
-bool validAddres(char* address) 
+// This is helper function to check if it is in the limit of the address given
+bool validAddres(char* address)
 {
     if( address > (vmm.vm_start + vmm.vm_size -1 ) ||
-            address < vmm.vm_start) 
+            address < vmm.vm_start)
         return false ;
 
     return true ;
 }
 
-VM_Page* searchPage(char* address, bool* newPage) 
+VM_Page* searchPage(char* address, bool* newPage)
 {
     VM_Page* ptr = vmm.list_head ;
 
@@ -118,54 +117,58 @@ VM_Page* searchPage(char* address, bool* newPage)
     return pagePtr ;
 }
 
-void handleExistingPage(VM_Page* pp, bool write) 
-{
+void handleExistingPage(VM_Page* pp, bool write)
+{   int refbit1=1;
+    int writebit=3;
     if(pp->onlyRead && write )
     {
         log_data.cause = WriteRO ;
         pp->onlyRead = false ;
-        pp->ref = 1 ;
-        pp->writeBack = 3 ;
+        pp->ref = refbit1 ;
+        pp->writeBack =writebit ;
 
         mprotect(pp->start_addr, vmm.page_size, PROT_READ | PROT_WRITE ) ;
     }
     else
     {
-        if( !write )
-        {
-            log_data.cause = ReadRW ;
-            pp->ref = 1 ;
-            mprotect(pp->start_addr, vmm.page_size, PROT_READ ) ;
+        if( write )
+        {   log_data.cause = WriteRW ;
+            pp->ref = refbit1 ;
+            pp->writeBack = writebit ;
+            mprotect(pp->start_addr, vmm.page_size, PROT_READ | PROT_WRITE ) ;  
+
         }
         else
-        {
-            log_data.cause = WriteRW ;
-            pp->ref = 1 ;
-            pp->writeBack = 3 ;
-            mprotect(pp->start_addr, vmm.page_size, PROT_READ | PROT_WRITE ) ;
+        {   log_data.cause = ReadRW ;
+            pp->ref = refbit1 ;
+            mprotect(pp->start_addr, vmm.page_size, PROT_READ ) ;  
+
         }
     }
 }
 
-void handleNewPage( VM_Page* pp, bool write) 
+void handleNewPage( VM_Page* pp, bool write)
 {
-    if( !write )
-    {
-        log_data.cause = ReadNPP;
-        pp->onlyRead = 1 ;
-        pp->ref  = 1 ;
-        mprotect(pp->start_addr, vmm.page_size, PROT_READ );
-    }
-    else
-    {
+    if( write )
+    {  
         log_data.cause = WriteNPP ;
         pp->ref = 1 ;
         pp->writeBack = 3 ;
         mprotect(pp->start_addr, vmm.page_size, PROT_READ | PROT_WRITE ) ;
+
+
+    }
+    else
+    {   log_data.cause = ReadNPP;
+        pp->onlyRead = 1 ;
+        pp->ref  = 1 ;
+        mprotect(pp->start_addr, vmm.page_size, PROT_READ );
+
+   
     }
 }
 
-void addToList(VM_Page* pagePtr) 
+void addToList(VM_Page* pagePtr)
 {
     if( vmm.list_head == NULL )
     {
@@ -180,17 +183,9 @@ void addToList(VM_Page* pagePtr)
     }
 }
 
-void removeFromList(VM_Page* pagePtr) 
-{
-    if(pagePtr->prev == NULL)
-    {
-        vmm.list_head = pagePtr->next ;
-    }
-    else
-    {
-        pagePtr->prev->next = pagePtr->next ;
-    }
-
+void removeFromList(VM_Page* pagePtr)
+{  
+   
     if( pagePtr->next == NULL)
     {
         vmm.list_tail = pagePtr->prev ;
@@ -200,29 +195,43 @@ void removeFromList(VM_Page* pagePtr)
         pagePtr->next->prev = pagePtr->prev ;
     }
 
+    if(pagePtr->prev != NULL)
+    {  
+        pagePtr->prev->next = pagePtr->next ;
+       
+    }
+    else
+    {
+      vmm.list_head = pagePtr->next ;
+    }
+
+   
     pagePtr->prev = NULL ;
     pagePtr->next = NULL ;
 
 }
 
 void handleFIFO(VM_Page* pagePtr, bool newPage)
-{
-    int pageFrame = -1 ;
+{   int notpossible=-1;
+    int pageFrame = notpossible ;
+    int bit1=1;//to help understand logic where we actually ean bit we use these two
+    int bit0=0;
+    bool writeflag=true;
 
     VM_Page* ptr = vmm.list_head ;
 
     while( ptr != NULL )
     {
-        if(ptr->frameNo > -1 )
+        if(ptr->frameNo > notpossible)
         {
             removeFromList(ptr ) ;
             pageFrame = ptr->frameNo ;
 
             log_data.pageEvicted = (ptr->start_addr - vmm.vm_start) / vmm.page_size ;
 
-            if( ptr->writeBack > 0 )
-                log_data.writeBack = true ;
-            resetPage(ptr, true) ;
+            if( ptr->writeBack > bit0 )
+                log_data.writeBack = writeflag;
+            resetPage(ptr, writeflag) ;
             addToList(ptr) ;
             break ;
         }
@@ -237,59 +246,64 @@ void handleFIFO(VM_Page* pagePtr, bool newPage)
     addToList(pagePtr) ;
 }
 
-void handleThirdReplacement(VM_Page* pagePtr, bool newPage) 
-{
-    int pageFrame = -1 ;
-    bool pageEvicted = false;
+void handleThirdReplacement(VM_Page* pagePtr, bool newPage)
+{   int notpossible=-1;
+    int pageFrame = notpossible ;
+    bool intial_flag= false;
+    bool write_flag= true;
+    bool pageEvicted = intial_flag;
+    int bit1=1;// to help understand logic 
+    int bit0=0;
 
-    // Run the loop until a page is removed
-    while (pageEvicted == false)
+   
+    while (pageEvicted == intial_flag)
     {
-        // Find the first page in cycle.
+       
         VM_Page *nextPtr = vmm.list_head ;
-        for (int i = 0; i < vmm.clockIndex; i++)
+        int limit= vmm.clockIndex;
+        for (int i = 0; i < limit; i++)
         {
             nextPtr = nextPtr->next;
         }
 
-        // Iterate till reach the end of the list.
-        while (nextPtr != NULL) 
+       
+        while (nextPtr != NULL)
         {
-            vmm.clockIndex++;
+            vmm.clockIndex= vmm.clockIndex+1;
 
-            if (nextPtr->frameNo > -1)
+            if (nextPtr->frameNo > notpossible)
             {
-                //protect the memory
+               
                 mprotect(nextPtr->start_addr, vmm.page_size, PROT_NONE);
 
-                // Check first chance
-                if (nextPtr->ref == 1)
+               
+                if (nextPtr->ref == bit1)
                 {
-                    nextPtr->ref = 0;
-                } 
-                else if ((nextPtr->writeBack & 1 << 1) > 0)
+                    nextPtr->ref = bit0;
+                }
+                else if ((nextPtr->writeBack & bit1 << bit1) > 0)
                 {
-                    // Second chance, check write first bit
-                    nextPtr->writeBack = 1;
+                   
+                    nextPtr->writeBack = bit1;
                 }
                 else
                 {
-                    // Current page is evicted.
-                    pageEvicted = true;
+                   
+                    pageEvicted = write_flag ;
                     log_data.pageEvicted =
-                        ((nextPtr->start_addr) 
+                        ((nextPtr->start_addr)
                          - vmm.vm_start) / vmm.page_size;
                     pageFrame = nextPtr->frameNo;
-                    nextPtr->frameNo = -1;
+                    nextPtr->frameNo = notpossible;
 
-                    // Check second write bit to determine writeback
-                    if ((nextPtr->writeBack & 1 << 0) > 0) {
-                        nextPtr->writeBack = 0;
-                        log_data.writeBack = true;
+                   
+                    if ((nextPtr->writeBack & bit1 << bit0) > 0) {
+                        nextPtr->writeBack = bit0;
+                        log_data.writeBack = write_flag;
                     }
                     else
                     {
-                        log_data.writeBack = false;
+                        log_data.writeBack = intial_flag;
                     }
 
                     break;
@@ -299,7 +313,7 @@ void handleThirdReplacement(VM_Page* pagePtr, bool newPage)
             nextPtr = nextPtr->next;
         }
 
-        if (!pageEvicted || nextPtr->next == NULL) 
+        if (!pageEvicted || nextPtr->next == NULL)
             vmm.clockIndex = 0;
     }
 
@@ -309,12 +323,13 @@ void handleThirdReplacement(VM_Page* pagePtr, bool newPage)
 }
 
 void resetPage(VM_Page* pp, bool protectPage)
-{
+
+{   bool set_to_start = false;
     pp->prev = NULL ;
     pp->next = NULL ;
     pp->frameNo  = -1 ;
-    pp->onlyRead = false ;
-    pp->ref = false ;
+    pp->onlyRead =  set_to_start ;
+    pp->ref =  set_to_start;
     pp->writeBack = 0 ;
 
     if( protectPage && pp->start_addr != NULL)
@@ -337,10 +352,9 @@ void resetVmm()
 }
 
 void resetLoggerData()
-{
-    log_data.virtualPageNo  = -1 ;
-    log_data.virtualPageOffset = -1 ;
-    log_data.pageEvicted = -1 ;
+{   int reset=-1;
+    log_data.virtualPageNo  = reset ;
+    log_data.virtualPageOffset = reset ;
+    log_data.pageEvicted = reset;
     log_data.writeBack = false ;
 }
-
